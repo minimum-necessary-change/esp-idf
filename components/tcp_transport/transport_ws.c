@@ -113,10 +113,17 @@ static int ws_connect(esp_transport_handle_t t, const char *host, int port, int 
         ESP_LOGE(TAG, "Error write Upgrade header %s", ws->buffer);
         return -1;
     }
-    if ((len = esp_transport_read(ws->parent, ws->buffer, DEFAULT_WS_BUFFER, timeout_ms)) <= 0) {
-        ESP_LOGE(TAG, "Error read response for Upgrade header %s", ws->buffer);
-        return -1;
-    }
+    int header_len = 0;
+    do {
+        if ((len = esp_transport_read(ws->parent, ws->buffer + header_len, DEFAULT_WS_BUFFER - header_len, timeout_ms)) <= 0) {
+            ESP_LOGE(TAG, "Error read response for Upgrade header %s", ws->buffer);
+            return -1;
+        }
+        header_len += len;
+        ws->buffer[header_len] = '\0';
+        ESP_LOGD(TAG, "Read header chunk %d, current header size: %d", len, header_len);
+    } while (NULL == strstr(ws->buffer, "\r\n\r\n") && header_len < DEFAULT_WS_BUFFER);
+
     char *server_key = get_http_header(ws->buffer, "Sec-WebSocket-Accept:");
     if (server_key == NULL) {
         ESP_LOGE(TAG, "Sec-WebSocket-Accept not found");
@@ -185,8 +192,8 @@ static int ws_read(esp_transport_handle_t t, char *buffer, int len, int timeout_
 {
     transport_ws_t *ws = esp_transport_get_context_data(t);
     int payload_len;
-    int payload_len_buff = len;
-    char *data_ptr = buffer, opcode, mask, *mask_key = NULL;
+    char ws_header[MAX_WEBSOCKET_HEADER_SIZE];
+    char *data_ptr = ws_header, opcode, mask, *mask_key = NULL;
     int rlen;
     int poll_read;
     if ((poll_read = esp_transport_poll_read(ws->parent, timeout_ms)) <= 0) {
@@ -195,7 +202,7 @@ static int ws_read(esp_transport_handle_t t, char *buffer, int len, int timeout_
 
     // Receive and process header first (based on header size)
     int header = 2;
-    if ((rlen = esp_transport_read(ws->parent, buffer, header, timeout_ms)) <= 0) {
+    if ((rlen = esp_transport_read(ws->parent, data_ptr, header, timeout_ms)) <= 0) {
         ESP_LOGE(TAG, "Error read data");
         return rlen;
     }
@@ -212,8 +219,6 @@ static int ws_read(esp_transport_handle_t t, char *buffer, int len, int timeout_
             return rlen;
         }
         payload_len = data_ptr[0] << 8 | data_ptr[1];
-        payload_len_buff = len - 4;
-        data_ptr += 2;
     } else if (payload_len == 127) {
         // headerLen += 8;
         header = 8;
@@ -228,29 +233,25 @@ static int ws_read(esp_transport_handle_t t, char *buffer, int len, int timeout_
         } else {
             payload_len = data_ptr[4] << 24 | data_ptr[5] << 16 | data_ptr[6] << 8 | data_ptr[7];
         }
-        data_ptr += 8;
-        payload_len_buff = len - 10;
     }
 
-    if (payload_len > payload_len_buff) {
-        ESP_LOGD(TAG, "Actual data to receive (%d) are longer than ws buffer (%d)", payload_len, payload_len_buff);
-        payload_len = payload_len_buff;
+    if (payload_len > len) {
+        ESP_LOGD(TAG, "Actual data to receive (%d) are longer than ws buffer (%d)", payload_len, len);
+        payload_len = len;
     }
 
     // Then receive and process payload
-    if ((rlen = esp_transport_read(ws->parent, data_ptr, payload_len, timeout_ms)) <= 0) {
+    if ((rlen = esp_transport_read(ws->parent, buffer, payload_len, timeout_ms)) <= 0) {
         ESP_LOGE(TAG, "Error read data");
         return rlen;
     }
 
     if (mask) {
-        mask_key = data_ptr;
-        data_ptr += 4;
+        mask_key = buffer;
+        data_ptr = buffer + 4;
         for (int i = 0; i < payload_len; i++) {
             buffer[i] = (data_ptr[i] ^ mask_key[i % 4]);
         }
-    } else {
-        memmove(buffer, data_ptr, payload_len);
     }
     return payload_len;
 }
