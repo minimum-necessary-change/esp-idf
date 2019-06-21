@@ -95,6 +95,14 @@ if(CONFIG_BT_ENABLED)
                    "bluedroid/bta/jv/bta_jv_api.c"
                    "bluedroid/bta/jv/bta_jv_cfg.c"
                    "bluedroid/bta/jv/bta_jv_main.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_act.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_api.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_at.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_cmd.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_main.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_rfc.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_sco.c"
+                   "bluedroid/bta/hf_client/bta_hf_client_sdp.c"
                    "bluedroid/bta/sdp/bta_sdp.c"
                    "bluedroid/bta/sdp/bta_sdp_act.c"
                    "bluedroid/bta/sdp/bta_sdp_api.c"
@@ -125,8 +133,11 @@ if(CONFIG_BT_ENABLED)
                    "bluedroid/btc/profile/std/a2dp/btc_av.c"
                    "bluedroid/btc/profile/std/avrc/btc_avrc.c"
                    "bluedroid/btc/profile/std/avrc/bta_avrc_co.c"
+                   "bluedroid/btc/profile/std/hf_client/btc_hf_client.c"
+                   "bluedroid/btc/profile/std/hf_client/bta_hf_client_co.c"
                    "bluedroid/btc/profile/std/gap/btc_gap_ble.c"
                    "bluedroid/btc/profile/std/gap/btc_gap_bt.c"
+                   "bluedroid/btc/profile/std/gap/bta_gap_bt_co.c"
                    "bluedroid/btc/profile/std/gatt/btc_gatt_common.c"
                    "bluedroid/btc/profile/std/gatt/btc_gatt_util.c"
                    "bluedroid/btc/profile/std/gatt/btc_gattc.c"
@@ -285,6 +296,6 @@ if(CONFIG_BT_ENABLED)
         target_compile_options(${COMPONENT_LIB} PRIVATE -Wno-implicit-fallthrough -Wno-unused-const-variable)
     endif()
 
-    target_link_libraries(${COMPONENT_LIB} "-L${CMAKE_CURRENT_LIST_DIR}/lib")
-    target_link_libraries(${COMPONENT_LIB} btdm_app)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-L${CMAKE_CURRENT_LIST_DIR}/lib")
+    target_link_libraries(${COMPONENT_LIB} PUBLIC btdm_app)
 endif()
