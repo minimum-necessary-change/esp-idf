@@ -2,6 +2,7 @@ Build System (CMake)
 ********************
 
 :link_to_translation:`zh_CN:[中文]`
+
 .. include:: ../cmake-warning.rst
 
 .. include:: ../cmake-pending-features.rst
@@ -97,7 +98,7 @@ Advanced Commands
 - ``idf.py app``, ``idf.py bootloader``, ``idf.py partition_table`` can be used to build only the app, bootloader, or partition table from the project as applicable.
 - There are matching commands ``idf.py app-flash``, etc. to flash only that single part of the project to the ESP32.
 - ``idf.py -p PORT erase_flash`` will use esptool.py to erase the ESP32's entire flash chip.
-- ``idf.py size`` prints some size information about the app. ``size-components`` and ``size-files`` are similar commands which print more detailed per-component or per-source-file information, respectively.
+- ``idf.py size`` prints some size information about the app. ``size-components`` and ``size-files`` are similar commands which print more detailed per-component or per-source-file information, respectively. If you define variable ``-DOUTPUT_JSON=1`` when running CMake (or ``idf.py``), the output will be formatted as JSON not as human readable text.
 - ``idf.py reconfigure`` re-runs CMake_ even if it doesn't seem to need re-running. This isn't necessary during normal usage, but can be useful after adding/removing files from the source tree, or when modifying CMake cache variables. For example, ``idf.py -DNAME='VALUE' reconfigure`` can be used to set variable ``NAME`` in CMake cache to value ``VALUE``.
 
 The order of multiple ``idf.py`` commands on the same invocation is not important, they will automatically be executed in the correct order for everything to take effect (ie building before flashing, erasing before flashing, etc.).
@@ -943,7 +944,10 @@ the first element/member instead.
 
   idf_build_component(component_dir)
 
-Add a directory *component_dir* that contains a component to the build. 
+Present a directory *component_dir* that contains a component to the build system. Relative paths are converted to absolute paths with respect to current directory.
+All calls to this command must be performed before `idf_build_process`. 
+
+This command does not guarantee that the component will be processed during build (see the `COMPONENTS` argument description for `idf_build_process`)
 
 .. code-block:: none
 
@@ -970,7 +974,10 @@ The call requires the target chip to be specified with *target* argument. Option
 - SDKCONFIG - output path of generated sdkconfig file; defaults to PROJECT_DIR/sdkconfig or CMAKE_SOURCE_DIR/sdkconfig depending if PROJECT_DIR is set
 - SDKCONFIG_DEFAULTS - defaults file to use for the build; defaults to empty
 - BUILD_DIR - directory to place ESP-IDF build-related artifacts, such as generated binaries, text files, components; defaults to CMAKE_BINARY_DIR
-- COMPONENTS - starting components for trimming the build; components not in the list are automatically if they are required in the expanded dependency tree
+- COMPONENTS - select components to process among the components known by the build system (added via `idf_build_component`). This argument is used to trim the build. 
+  Other components are automatically added if they are required in the dependency chain, i.e. 
+  the public and private requirements of the components in this list are automatically added, and in turn the public and private requirements of those requirements, 
+  so on and so forth. If not specified, all components known to the build system are processed.
 
 .. code-block:: none
 

@@ -43,6 +43,7 @@
 #include "sdkconfig.h"
 #include "esp_system.h"
 #include "esp_spi_flash.h"
+#include "esp_flash.h"
 #include "nvs_flash.h"
 #include "esp_event.h"
 #include "esp_spi_flash.h"
@@ -58,11 +59,10 @@
 #include "esp_phy_init.h"
 #include "esp32/cache_err_int.h"
 #include "esp_coexist_internal.h"
-#include "esp_debug_helpers.h"
 #include "esp_core_dump.h"
 #include "esp_app_trace.h"
 #include "esp_private/dbg_stubs.h"
-#include "esp_efuse.h"
+#include "esp_flash_encrypt.h"
 #include "esp32/spiram.h"
 #include "esp_clk_internal.h"
 #include "esp_timer.h"
@@ -70,6 +70,7 @@
 #include "esp_private/pm_impl.h"
 #include "trax.h"
 #include "esp_ota_ops.h"
+#include "esp_efuse.h"
 
 #define STRINGIFY(s) STRINGIFY2(s)
 #define STRINGIFY2(s) #s
@@ -202,6 +203,20 @@ void IRAM_ATTR call_start_cpu0()
         abort();
     }
     ESP_EARLY_LOGI(TAG, "Starting app cpu, entry point is %p", call_start_cpu1);
+    
+    esp_flash_enc_mode_t mode;
+    mode = esp_get_flash_encryption_mode();
+    if (mode == ESP_FLASH_ENC_MODE_DEVELOPMENT) {
+#ifdef CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE
+        ESP_EARLY_LOGE(TAG, "Flash encryption settings error: mode should be RELEASE but is actually DEVELOPMENT");
+        ESP_EARLY_LOGE(TAG, "Mismatch found in security options in menuconfig and efuse settings");
+#else
+        ESP_EARLY_LOGW(TAG, "Flash encryption mode is DEVELOPMENT");
+#endif
+    } else if (mode == ESP_FLASH_ENC_MODE_RELEASE) {
+        ESP_EARLY_LOGI(TAG, "Flash encryption mode is RELEASE");
+    }
+
     //Flush and enable icache for APP CPU
     Cache_Flush(1);
     Cache_Read_Enable(1);
@@ -388,6 +403,10 @@ void start_cpu0_default(void)
     spi_flash_init();
     /* init default OS-aware flash access critical section */
     spi_flash_guard_set(&g_flash_guard_default_ops);
+
+    esp_flash_app_init();
+    esp_err_t flash_ret = esp_flash_init_default_chip();
+    assert(flash_ret == ESP_OK);
 #ifdef CONFIG_PM_ENABLE
     esp_pm_impl_init();
 #ifdef CONFIG_PM_DFS_INIT_AUTO

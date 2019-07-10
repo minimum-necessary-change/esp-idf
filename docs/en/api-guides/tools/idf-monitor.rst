@@ -34,13 +34,13 @@ For easy interaction with IDF Monitor, use the keyboard shortcuts given in the t
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 |  - Ctrl+F         | Build and flash the project                            | Pauses idf_monitor to run the ``make flash`` (``idf.py flash``) target, then resumes idf_monitor. Any changed source files are recompiled and then re-flashed.   |
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-|  - Ctrl+A         | Build and flash the app only                           | Pauses idf_monitor to run the ``app-flash`` target, then resumes idf_monitor. Similar to the ``flash`` target, but only the main app is built and re-flashed.    |
+|  - Ctrl+A (or A)  | Build and flash the app only                           | Pauses idf_monitor to run the ``app-flash`` target, then resumes idf_monitor. Similar to the ``flash`` target, but only the main app is built and re-flashed.    |
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 |  - Ctrl+Y         | Stop/resume log output printing on screen              | Discards all incoming serial data while activated. Allows to quickly pause and examine log output without quitting the monitor.                                  |
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 |  - Ctrl+L         | Stop/resume log output saved to file                   | Creates a file in the project directory and the output is written to that file until this is disabled with the same keyboard shortcut (or IDF Monitor exits).    |
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
-|  - Ctrl+H         | Display all keyboard shortcuts                         |                                                                                                                                                                  |
+|  - Ctrl+H (or H)  | Display all keyboard shortcuts                         |                                                                                                                                                                  |
 +-------------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 
 Any keys pressed, other than ``Ctrl-]`` and ``Ctrl-T``, will be sent through the serial port.
@@ -115,7 +115,7 @@ In the background, IDF Monitor runs the following command::
 Output Filtering
 ~~~~~~~~~~~~~~~~
 
-IDF monitor can be invoked as ``make monitor PRINT_FILTER=""`` (for make) or ``idf.py monitor PRINT_FILTER=""`` (for cmake), where ``PRINT_FILTER`` is the parameter for output filtering. The default value is an empty string, which means that everything is printed.
+IDF monitor can be invoked as ``make monitor PRINT_FILTER=""`` (for make) or ``idf.py monitor --print-filter=""`` (for cmake), where ``PRINT_FILTER`` is the parameter for output filtering. The default value is an empty string, which means that everything is printed.
 
 Restrictions on what to print can be specified as a series of ``<tag>:<log_level>`` items where ``<tag>`` is the tag string and ``<log_level>`` is a character from the set ``{N, E, W, I, D, V, *}`` referring to a level for :doc:`logging <../../api-reference/system/log>`.
 
