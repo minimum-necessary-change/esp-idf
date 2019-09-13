@@ -310,15 +310,6 @@ def build_target(target_name, ctx, args):
     _ensure_build_directory(args)
     generator_cmd = GENERATOR_CMDS[args.generator]
 
-    if args.ccache:
-        # Setting CCACHE_BASEDIR & CCACHE_NO_HASHDIR ensures that project paths aren't stored in the ccache entries
-        # (this means ccache hits can be shared between different projects. It may mean that some debug information
-        # will point to files in another project, if these files are perfect duplicates of each other.)
-        #
-        # It would be nicer to set these from cmake, but there's no cross-platform way to set build-time environment
-        # os.environ["CCACHE_BASEDIR"] = args.build_dir
-        # os.environ["CCACHE_NO_HASHDIR"] = "1"
-        pass
     if args.verbose:
         generator_cmd += [GENERATOR_VERBOSE[args.generator]]
 
@@ -540,9 +531,20 @@ def get_default_serial_port():
 
 
 class PropertyDict(dict):
-    def __init__(self, *args, **kwargs):
-        super(PropertyDict, self).__init__(*args, **kwargs)
-        self.__dict__ = self
+    def __getattr__(self, name):
+        if name in self:
+            return self[name]
+        else:
+            raise AttributeError("'PropertyDict' object has no attribute '%s'" % name)
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError("'PropertyDict' object has no attribute '%s'" % name)
 
 
 def init_cli():
@@ -986,9 +988,9 @@ def init_cli():
             },
             {
                 "names": ["--ccache/--no-ccache"],
-                "help": "Use ccache in build. Disabled by default.",
+                "help": "Use ccache in build. Disabled by default, unless IDF_CCACHE_ENABLE environment variable is set to a non-zero value.",
                 "is_flag": True,
-                "default": False,
+                "default": os.getenv("IDF_CCACHE_ENABLE") not in [None, "", "0"],
             },
             {
                 "names": ["-G", "--generator"],
