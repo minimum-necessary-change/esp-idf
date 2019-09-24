@@ -121,8 +121,13 @@ def check_environment():
 
     (cmake will check a lot of other things)
     """
+    checks_output = []
+
     if not executable_exists(["cmake", "--version"]):
+        print_idf_version()
         raise FatalError("'cmake' must be available on the PATH to use %s" % PROG)
+
+    # verify that IDF_PATH env variable is set
     # find the directory idf.py is in, then the parent directory of this, and assume this is IDF_PATH
     detected_idf_path = _realpath(os.path.join(os.path.dirname(__file__), ".."))
     if "IDF_PATH" in os.environ:
@@ -138,9 +143,9 @@ def check_environment():
         os.environ["IDF_PATH"] = detected_idf_path
 
     # check Python dependencies
-    print("Checking Python dependencies...")
+    checks_output.append("Checking Python dependencies...")
     try:
-        subprocess.check_call(
+        out = subprocess.check_output(
             [
                 os.environ["PYTHON"],
                 os.path.join(
@@ -149,8 +154,14 @@ def check_environment():
             ],
             env=os.environ,
         )
-    except subprocess.CalledProcessError:
+
+        checks_output.append(out.decode('utf-8','ignore').strip())
+    except subprocess.CalledProcessError as e:
+        print(e.output.decode('utf-8','ignore'))
+        print_idf_version()
         raise SystemExit(1)
+
+    return checks_output
 
 
 def executable_exists(args):
@@ -494,6 +505,71 @@ def _safe_relpath(path, start=None):
         return os.path.abspath(path)
 
 
+def _idf_version_from_cmake():
+    version_path = os.path.join(os.environ["IDF_PATH"], "tools/cmake/version.cmake")
+    regex = re.compile(r"^\s*set\s*\(\s*IDF_VERSION_([A-Z]{5})\s+(\d+)")
+    ver = {}
+    try:
+        with open(version_path) as f:
+            for line in f:
+                m = regex.match(line)
+
+                if m:
+                    ver[m.group(1)] = m.group(2)
+
+        return "v%s.%s.%s" % (ver["MAJOR"], ver["MINOR"], ver["PATCH"])
+    except (KeyError, OSError):
+        sys.stderr.write("WARNING: Cannot find ESP-IDF version in version.cmake\n")
+        return None
+
+
+def idf_version():
+    """Print version of ESP-IDF"""
+
+    #  Try to get version from git:
+    try:
+        version = subprocess.check_output([
+            "git",
+            "--git-dir=%s" % os.path.join(os.environ["IDF_PATH"], '.git'),
+            "--work-tree=%s" % os.environ["IDF_PATH"], "describe", "--tags", "--dirty"
+        ]).decode('utf-8', 'ignore').strip()
+    except (subprocess.CalledProcessError, UnicodeError):
+        # if failed, then try to parse cmake.version file
+        sys.stderr.write("WARNING: Git version unavailable, reading from source\n")
+        version = _idf_version_from_cmake()
+
+    return version
+
+
+def print_idf_version():
+    version = idf_version()
+    if version:
+        print("ESP-IDF %s" % version)
+    else:
+        print("ESP-IDF version unknown")
+
+
+def idf_version_callback(ctx, param, value):
+    if not value or ctx.resilient_parsing:
+        return
+
+    version = idf_version()
+
+    if not version:
+        raise FatalError("ESP-IDF version cannot be determined")
+
+    print("ESP-IDF %s" % version)
+    sys.exit(0)
+
+
+def verbose_callback(ctx, param, value):
+    if not value or ctx.resilient_parsing:
+        return
+
+    for line in ctx.command.verbose_output:
+        print(line)
+
+
 def get_commandline_options(ctx):
     """ Return all the command line options up to first action """
     # This approach ignores argument parsing done Click
@@ -547,9 +623,49 @@ class PropertyDict(dict):
             raise AttributeError("'PropertyDict' object has no attribute '%s'" % name)
 
 
-def init_cli():
+def init_cli(verbose_output=None):
     # Click is imported here to run it after check_environment()
     import click
+
+    class DeprecationMessage(object):
+        """Construct deprecation notice for help messages"""
+
+        def __init__(self, deprecated=False):
+            self.deprecated = deprecated
+            self.since = None
+            self.removed = None
+            self.custom_message = ""
+
+            if isinstance(deprecated, dict):
+                self.custom_message = deprecated.get("message", "")
+                self.since = deprecated.get("since", None)
+                self.removed = deprecated.get("removed", None)
+            elif isinstance(deprecated, str):
+                self.custom_message = deprecated
+
+        def full_message(self, type="Option"):
+            return "%s is deprecated %sand will be removed in%s.%s" % (
+                type,
+                "since %s " % self.since if self.since else "",
+                " %s" % self.removed if self.removed else " future versions",
+                " %s" % self.custom_message if self.custom_message else ""
+            )
+
+        def help(self, text, type="Option", separator=" "):
+            text = text or ""
+            return self.full_message(type) + separator + text if self.deprecated else text
+
+        def short_help(self, text):
+            text = text or ""
+            return ("Deprecated! " + text) if self.deprecated else text
+
+    def print_deprecation_warning(ctx):
+        """Prints deprectation warnings for arguments in given context"""
+        for option in ctx.command.params:
+            default = () if option.multiple else option.default
+            if isinstance(option, Option) and option.deprecated and ctx.params[option.name] != default:
+                print("Warning: %s" % DeprecationMessage(option.deprecated).
+                      full_message('Option "%s"' % option.name))
 
     class Task(object):
         def __init__(
@@ -573,6 +689,7 @@ def init_cli():
             self,
             name=None,
             aliases=None,
+            deprecated=False,
             dependencies=None,
             order_dependencies=None,
             **kwargs
@@ -580,6 +697,7 @@ def init_cli():
             super(Action, self).__init__(name, **kwargs)
 
             self.name = self.name or self.callback.__name__
+            self.deprecated = deprecated
 
             if aliases is None:
                 aliases = []
@@ -597,6 +715,11 @@ def init_cli():
 
             # Show first line of help if short help is missing
             self.short_help = self.short_help or self.help.split("\n")[0]
+
+            if deprecated:
+                deprecation = DeprecationMessage(deprecated)
+                self.short_help = deprecation.short_help(self.short_help)
+                self.help = deprecation.help(self.help, type="Command", separator="\n")
 
             # Add aliases to help string
             if aliases:
@@ -620,8 +743,21 @@ def init_cli():
 
                 self.callback = wrapped_callback
 
+        def invoke(self, ctx):
+            if self.deprecated:
+                print("Warning: %s" % DeprecationMessage(self.deprecated).full_message('Command "%s"' % self.name))
+                self.deprecated = False  # disable Click's built-in deprecation handling
+
+            # Print warnings for options
+            print_deprecation_warning(ctx)
+            return super(Action, self).invoke(ctx)
+
     class Argument(click.Argument):
-        """Positional argument"""
+        """
+        Positional argument
+
+        names - alias of 'param_decls'
+        """
 
         def __init__(self, **kwargs):
             names = kwargs.pop("names")
@@ -662,11 +798,27 @@ def init_cli():
     class Option(click.Option):
         """Option that knows whether it should be global"""
 
-        def __init__(self, scope=None, **kwargs):
+        def __init__(self, scope=None, deprecated=False, **kwargs):
+            """
+            Keyword arguments additional to Click's Option class:
+
+            names - alias of 'param_decls'
+            deprecated - marks option as deprecated. May be boolean, string (with custom deprecation message)
+            or dict with optional keys:
+                since: version of deprecation
+                removed: version when option will be removed
+                custom_message:  Additional text to deprecation warning
+            """
+
             kwargs["param_decls"] = kwargs.pop("names")
             super(Option, self).__init__(**kwargs)
 
+            self.deprecated = deprecated
             self.scope = Scope(scope)
+
+            if deprecated:
+                deprecation = DeprecationMessage(deprecated)
+                self.help = deprecation.help(self.help)
 
             if self.scope.is_global:
                 self.help += " This option can be used at most once either globally, or for one subcommand."
@@ -674,7 +826,7 @@ def init_cli():
     class CLI(click.MultiCommand):
         """Action list contains all actions with options available for CLI"""
 
-        def __init__(self, action_lists=None, help=None):
+        def __init__(self, action_lists=None, verbose_output=None, help=None):
             super(CLI, self).__init__(
                 chain=True,
                 invoke_without_command=True,
@@ -685,6 +837,11 @@ def init_cli():
             self._actions = {}
             self.global_action_callbacks = []
             self.commands_with_aliases = {}
+
+            if verbose_output is None:
+                verbose_output = []
+
+            self.verbose_output = verbose_output
 
             if action_lists is None:
                 action_lists = []
@@ -829,6 +986,7 @@ def init_cli():
             for task in tasks:
                 for key in list(task.action_args):
                     option = next((o for o in ctx.command.params if o.name == key), None)
+
                     if option and (option.scope.is_global or option.scope.is_shared):
                         local_value = task.action_args.pop(key)
                         global_value = global_args[key]
@@ -841,6 +999,9 @@ def init_cli():
                             )
                         if local_value != default:
                             global_args[key] = local_value
+
+            # Show warnings about global arguments
+            print_deprecation_warning(ctx)
 
             # Validate global arguments
             for action_callback in ctx.command.global_action_callbacks:
@@ -963,6 +1124,12 @@ def init_cli():
     root_options = {
         "global_options": [
             {
+                "names": ["--version"],
+                "help": "Show IDF version and exit.",
+                "is_flag": True,
+                "callback": idf_version_callback
+            },
+            {
                 "names": ["-C", "--project-dir"],
                 "help": "Project directory.",
                 "type": click.Path(),
@@ -984,7 +1151,9 @@ def init_cli():
                 "names": ["-v", "--verbose"],
                 "help": "Verbose build output.",
                 "is_flag": True,
+                "is_eager": True,
                 "default": False,
+                "callback": verbose_callback
             },
             {
                 "names": ["--ccache/--no-ccache"],
@@ -1257,12 +1426,12 @@ def init_cli():
     except NameError:
         pass
 
-    return CLI(help="ESP-IDF build management", action_lists=all_actions)
+    return CLI(help="ESP-IDF build management", verbose_output=verbose_output, action_lists=all_actions)
 
 
 def main():
-    check_environment()
-    cli = init_cli()
+    checks_output = check_environment()
+    cli = init_cli(verbose_output=checks_output)
     cli(prog_name=PROG)
 
 
