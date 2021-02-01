@@ -59,10 +59,14 @@ typedef nvs_handle_t nvs_handle IDF_DEPRECATED("Replace with nvs_handle_t");
 #define ESP_ERR_NVS_ENCR_NOT_SUPPORTED      (ESP_ERR_NVS_BASE + 0x15)  /*!< NVS encryption is not supported in this version */
 #define ESP_ERR_NVS_KEYS_NOT_INITIALIZED    (ESP_ERR_NVS_BASE + 0x16)  /*!< NVS key partition is uninitialized */
 #define ESP_ERR_NVS_CORRUPT_KEY_PART        (ESP_ERR_NVS_BASE + 0x17)  /*!< NVS key partition is corrupt */
+#define ESP_ERR_NVS_WRONG_ENCRYPTION        (ESP_ERR_NVS_BASE + 0x19)  /*!< NVS partition is marked as encrypted with generic flash encryption. This is forbidden since the NVS encryption works differently. */
 
 #define ESP_ERR_NVS_CONTENT_DIFFERS         (ESP_ERR_NVS_BASE + 0x18)  /*!< Internal error; never returned by nvs API functions.  NVS key is different in comparison */
 
-#define NVS_DEFAULT_PART_NAME           "nvs"   /*!< Default partition name of the NVS partition in the partition table */
+#define NVS_DEFAULT_PART_NAME               "nvs"   /*!< Default partition name of the NVS partition in the partition table */
+
+#define NVS_PART_NAME_MAX_SIZE              16   /*!< maximum length of partition name (excluding null terminator) */
+#define NVS_KEY_NAME_MAX_SIZE               16   /*!< Maximal length of NVS key name (including null terminator) */
 
 /**
  * @brief Mode of opening the non-volatile storage
@@ -119,9 +123,7 @@ typedef struct nvs_opaque_iterator_t *nvs_iterator_t;
  * The default NVS partition is the one that is labelled "nvs" in the partition
  * table.
  *
- * @param[in]  name        Namespace name. Maximal length is determined by the
- *                         underlying implementation, but is guaranteed to be
- *                         at least 15 characters. Shouldn't be empty.
+ * @param[in]  name        Namespace name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param[in]  open_mode   NVS_READWRITE or NVS_READONLY. If NVS_READONLY, will
  *                         open a handle for reading only. All write requests will
  *             be rejected for this handle.
@@ -135,6 +137,7 @@ typedef struct nvs_opaque_iterator_t *nvs_iterator_t;
  *             - ESP_ERR_NVS_NOT_FOUND id namespace doesn't exist yet and
  *               mode is NVS_READONLY
  *             - ESP_ERR_NVS_INVALID_NAME if namespace name doesn't satisfy constraints
+ *             - ESP_ERR_NO_MEM in case memory could not be allocated for the internal structures
  *             - other error codes from the underlying storage driver
  */
 esp_err_t nvs_open(const char* name, nvs_open_mode_t open_mode, nvs_handle_t *out_handle);
@@ -147,9 +150,7 @@ esp_err_t nvs_open(const char* name, nvs_open_mode_t open_mode, nvs_handle_t *ou
  * with NVS using nvs_flash_init_partition() API.
  *
  * @param[in]  part_name   Label (name) of the partition of interest for object read/write/erase
- * @param[in]  name        Namespace name. Maximal length is determined by the
- *                         underlying implementation, but is guaranteed to be
- *                         at least 15 characters. Shouldn't be empty.
+ * @param[in]  name        Namespace name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param[in]  open_mode   NVS_READWRITE or NVS_READONLY. If NVS_READONLY, will
  *                         open a handle for reading only. All write requests will
  *             be rejected for this handle.
@@ -163,6 +164,7 @@ esp_err_t nvs_open(const char* name, nvs_open_mode_t open_mode, nvs_handle_t *ou
  *             - ESP_ERR_NVS_NOT_FOUND id namespace doesn't exist yet and
  *               mode is NVS_READONLY
  *             - ESP_ERR_NVS_INVALID_NAME if namespace name doesn't satisfy constraints
+ *             - ESP_ERR_NO_MEM in case memory could not be allocated for the internal structures
  *             - other error codes from the underlying storage driver
  */
 esp_err_t nvs_open_from_partition(const char *part_name, const char* name, nvs_open_mode_t open_mode, nvs_handle_t *out_handle);
@@ -176,9 +178,7 @@ esp_err_t nvs_open_from_partition(const char *part_name, const char* name, nvs_o
  *
  * @param[in]  handle  Handle obtained from nvs_open function.
  *                     Handles that were opened read only cannot be used.
- * @param[in]  key     Key name. Maximal length is determined by the underlying
- *                     implementation, but is guaranteed to be at least
- *                     15 characters. Shouldn't be empty.
+ * @param[in]  key     Key name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param[in]  value   The value to set.
  *                     For strings, the maximum length (including null character) is
  *                     4000 bytes.
@@ -205,7 +205,7 @@ esp_err_t nvs_set_u32 (nvs_handle_t handle, const char* key, uint32_t value);
 esp_err_t nvs_set_i64 (nvs_handle_t handle, const char* key, int64_t value);
 esp_err_t nvs_set_u64 (nvs_handle_t handle, const char* key, uint64_t value);
 esp_err_t nvs_set_str (nvs_handle_t handle, const char* key, const char* value);
-/**@}*/ 
+/**@}*/
 
 /**
  * @brief       set variable length binary value for given key
@@ -215,7 +215,7 @@ esp_err_t nvs_set_str (nvs_handle_t handle, const char* key, const char* value);
  *
  * @param[in]  handle  Handle obtained from nvs_open function.
  *                     Handles that were opened read only cannot be used.
- * @param[in]  key     Key name. Maximal length is 15 characters. Shouldn't be empty.
+ * @param[in]  key     Key name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param[in]  value   The value to set.
  * @param[in]  length  length of binary value to set, in bytes; Maximum length is
  *                     508000 bytes or (97.6% of the partition size - 4000) bytes
@@ -260,9 +260,7 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char* key, const void* value, 
  * \endcode
  *
  * @param[in]     handle     Handle obtained from nvs_open function.
- * @param[in]     key        Key name. Maximal length is determined by the underlying
- *                           implementation, but is guaranteed to be at least
- *                           15 characters. Shouldn't be empty.
+ * @param[in]     key        Key name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param         out_value  Pointer to the output value.
  *                           May be NULL for nvs_get_str and nvs_get_blob, in this
  *                           case required length will be returned in length argument.
@@ -282,12 +280,12 @@ esp_err_t nvs_get_i32 (nvs_handle_t handle, const char* key, int32_t* out_value)
 esp_err_t nvs_get_u32 (nvs_handle_t handle, const char* key, uint32_t* out_value);
 esp_err_t nvs_get_i64 (nvs_handle_t handle, const char* key, int64_t* out_value);
 esp_err_t nvs_get_u64 (nvs_handle_t handle, const char* key, uint64_t* out_value);
-/**@}*/ 
+/**@}*/
 
 /**
  * @brief      get value for given key
  *
- * These functions retrieve value for the key, given its name. If key does not
+ * These functions retrieve the data of an entry, given its key. If key does not
  * exist, or the requested variable type doesn't match the type which was used
  * when setting a value, an error is returned.
  *
@@ -321,9 +319,7 @@ esp_err_t nvs_get_u64 (nvs_handle_t handle, const char* key, uint64_t* out_value
  * \endcode
  *
  * @param[in]     handle     Handle obtained from nvs_open function.
- * @param[in]     key        Key name. Maximal length is determined by the underlying
- *                           implementation, but is guaranteed to be at least
- *                           15 characters. Shouldn't be empty.
+ * @param[in]     key        Key name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  * @param         out_value  Pointer to the output value.
  *                           May be NULL for nvs_get_str and nvs_get_blob, in this
  *                           case required length will be returned in length argument.
@@ -353,9 +349,7 @@ esp_err_t nvs_get_blob(nvs_handle_t handle, const char* key, void* out_value, si
  * @param[in]  handle  Storage handle obtained with nvs_open.
  *                     Handles that were opened read only cannot be used.
  *
- * @param[in]  key     Key name. Maximal length is determined by the underlying
- *                     implementation, but is guaranteed to be at least
- *                     15 characters. Shouldn't be empty.
+ * @param[in]  key     Key name. Maximal length is (NVS_KEY_NAME_MAX_SIZE-1) characters. Shouldn't be empty.
  *
  * @return
  *              - ESP_OK if erase operation was successful
@@ -489,7 +483,7 @@ esp_err_t nvs_get_stats(const char *part_name, nvs_stats_t *nvs_stats);
  *               Return param used_entries will be filled 0.
  *             - ESP_ERR_NVS_INVALID_HANDLE if handle has been closed or is NULL.
  *               Return param used_entries will be filled 0.
- *             - ESP_ERR_INVALID_ARG if nvs_stats equal to NULL.
+ *             - ESP_ERR_INVALID_ARG if used_entries equal to NULL.
  *             - Other error codes from the underlying storage driver.
  *               Return param used_entries will be filled 0.
  */
@@ -557,39 +551,9 @@ void nvs_entry_info(nvs_iterator_t iterator, nvs_entry_info_t *out_info);
  */
 void nvs_release_iterator(nvs_iterator_t iterator);
 
-/**
- * @brief       Returns next item matching the iterator criteria, NULL if no such item exists.
- *
- * Note that any copies of the iterator will be invalid after this call.
- *
- * @param[in]   iterator     Iterator obtained from nvs_entry_find function. Must be non-NULL.
- *
- * @return
- *          NULL if no entry was found, valid nvs_iterator_t otherwise.
- */
-nvs_iterator_t nvs_entry_next(nvs_iterator_t iterator);
-
-/**
- * @brief       Fills nvs_entry_info_t structure with information about entry pointed to by the iterator.
- *
- * @param[in]   iterator     Iterator obtained from nvs_entry_find or nvs_entry_next function. Must be non-NULL.
- *
- * @param[out]  out_info     Structure to which entry information is copied.
- */
-void nvs_entry_info(nvs_iterator_t iterator, nvs_entry_info_t *out_info);
-
-/**
- * @brief       Release iterator
- *
- * @param[in]   iterator    Release iterator obtained from nvs_entry_find function. NULL argument is allowed.
- *
- */
-void nvs_release_iterator(nvs_iterator_t iterator);
-
 
 #ifdef __cplusplus
 } // extern "C"
 #endif
 
 #endif //ESP_NVS_H
-

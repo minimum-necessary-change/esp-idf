@@ -13,27 +13,30 @@
 // limitations under the License.
 
 #include <string.h>
-#include <hal/spi_ll.h>
-#include <hal/spi_slave_hal.h>
-#include <soc/lldesc.h>
-#include "driver/spi_common.h"
-#include "driver/spi_slave.h"
-#include "soc/spi_periph.h"
-#include "esp32/rom/ets_sys.h"
 #include "esp_types.h"
 #include "esp_attr.h"
 #include "esp_intr_alloc.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_pm.h"
+#include "esp_heap_caps.h"
+#include "esp_rom_gpio.h"
+#include "esp_rom_sys.h"
+#include "soc/lldesc.h"
+#include "soc/soc_caps.h"
+#include "soc/spi_periph.h"
+#include "soc/soc_memory_layout.h"
+#include "hal/spi_ll.h"
+#include "hal/spi_slave_hal.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/xtensa_api.h"
 #include "freertos/task.h"
-#include "soc/soc_memory_layout.h"
-#include "esp32/rom/lldesc.h"
+#include "sdkconfig.h"
+
 #include "driver/gpio.h"
-#include "esp_heap_caps.h"
+#include "driver/spi_common_internal.h"
+#include "driver/spi_slave.h"
+#include "hal/spi_slave_hal.h"
 
 static const char *SPI_TAG = "spi_slave";
 #define SPI_CHECK(a, str, ret_val) \
@@ -41,8 +44,6 @@ static const char *SPI_TAG = "spi_slave";
         ESP_LOGE(SPI_TAG,"%s(%d): %s", __FUNCTION__, __LINE__, str); \
         return (ret_val); \
     }
-
-#define VALID_HOST(x) (x>SPI_HOST && x<=VSPI_HOST)
 
 #ifdef CONFIG_SPI_SLAVE_ISR_IN_IRAM
 #define SPI_SLAVE_ISR_ATTR IRAM_ATTR
@@ -76,6 +77,16 @@ static spi_slave_t *spihost[SOC_SPI_PERIPH_NUM];
 
 static void IRAM_ATTR spi_intr(void *arg);
 
+static inline bool is_valid_host(spi_host_device_t host)
+{
+#if CONFIG_IDF_TARGET_ESP32
+    return host >= SPI1_HOST && host <= SPI3_HOST;
+#else
+// SPI_HOST (SPI1_HOST) is not supported by the SPI Slave driver on ESP32-S2 & later
+    return host >= SPI2_HOST && host <= SPI3_HOST;
+#endif
+}
+
 static inline bool bus_is_iomux(spi_slave_t *host)
 {
     return host->flags&SPICOMMON_BUSFLAG_IOMUX_PINS;
@@ -83,7 +94,7 @@ static inline bool bus_is_iomux(spi_slave_t *host)
 
 static void freeze_cs(spi_slave_t *host)
 {
-    gpio_matrix_in(GPIO_FUNC_IN_HIGH, spi_periph_signal[host->id].spics_in, false);
+    esp_rom_gpio_connect_in_signal(GPIO_MATRIX_CONST_ONE_INPUT, spi_periph_signal[host->id].spics_in, false);
 }
 
 // Use this function instead of cs_initial to avoid overwrite the output config
@@ -93,7 +104,7 @@ static inline void restore_cs(spi_slave_t *host)
     if (bus_is_iomux(host)) {
         gpio_iomux_in(host->cfg.spics_io_num, spi_periph_signal[host->id].spics_in);
     } else {
-        gpio_matrix_in(host->cfg.spics_io_num, spi_periph_signal[host->id].spics_in, false);
+        esp_rom_gpio_connect_in_signal(host->cfg.spics_io_num, spi_periph_signal[host->id].spics_in, false);
     }
 }
 
@@ -103,12 +114,17 @@ esp_err_t spi_slave_initialize(spi_host_device_t host, const spi_bus_config_t *b
     esp_err_t ret = ESP_OK;
     esp_err_t err;
     //We only support HSPI/VSPI, period.
-    SPI_CHECK(VALID_HOST(host), "invalid host", ESP_ERR_INVALID_ARG);
+    SPI_CHECK(is_valid_host(host), "invalid host", ESP_ERR_INVALID_ARG);
+#if defined(CONFIG_IDF_TARGET_ESP32)
     SPI_CHECK( dma_chan >= 0 && dma_chan <= 2, "invalid dma channel", ESP_ERR_INVALID_ARG );
+#elif defined(CONFIG_IDF_TARGET_ESP32S2)
+    SPI_CHECK( dma_chan == 0 || dma_chan == host, "invalid dma channel", ESP_ERR_INVALID_ARG );
+#endif
     SPI_CHECK((bus_config->intr_flags & (ESP_INTR_FLAG_HIGH|ESP_INTR_FLAG_EDGE|ESP_INTR_FLAG_INTRDISABLED))==0, "intr flag not allowed", ESP_ERR_INVALID_ARG);
 #ifndef CONFIG_SPI_SLAVE_ISR_IN_IRAM
     SPI_CHECK((bus_config->intr_flags & ESP_INTR_FLAG_IRAM)==0, "ESP_INTR_FLAG_IRAM should be disabled when CONFIG_SPI_SLAVE_ISR_IN_IRAM is not set.", ESP_ERR_INVALID_ARG);
 #endif
+    SPI_CHECK(slave_config->spics_io_num < 0 || GPIO_IS_VALID_GPIO(slave_config->spics_io_num), "spics pin invalid", ESP_ERR_INVALID_ARG);
 
     spi_chan_claimed=spicommon_periph_claim(host, "spi slave");
     SPI_CHECK(spi_chan_claimed, "host already in use", ESP_ERR_INVALID_STATE);
@@ -120,6 +136,8 @@ esp_err_t spi_slave_initialize(spi_host_device_t host, const spi_bus_config_t *b
             spicommon_periph_free( host );
             SPI_CHECK(dma_chan_claimed, "dma channel already in use", ESP_ERR_INVALID_STATE);
         }
+
+        spicommon_connect_spi_and_dma(host, dma_chan);
     }
 
     spihost[host] = malloc(sizeof(spi_slave_t));
@@ -136,7 +154,10 @@ esp_err_t spi_slave_initialize(spi_host_device_t host, const spi_bus_config_t *b
         ret = err;
         goto cleanup;
     }
-    spicommon_cs_initialize(host, slave_config->spics_io_num, 0, !bus_is_iomux(spihost[host]));
+    if (slave_config->spics_io_num >= 0) {
+        spicommon_cs_initialize(host, slave_config->spics_io_num, 0, !bus_is_iomux(spihost[host]));
+    }
+
     // The slave DMA suffers from unexpected transactions. Forbid reading if DMA is enabled by disabling the CS line.
     if (use_dma) freeze_cs(spihost[host]);
 
@@ -178,7 +199,13 @@ esp_err_t spi_slave_initialize(spi_host_device_t host, const spi_bus_config_t *b
     }
 
     spi_slave_hal_context_t *hal = &spihost[host]->hal;
-    spi_slave_hal_init(hal, host);
+    //assign the SPI, RX DMA and TX DMA peripheral registers beginning address
+    spi_slave_hal_config_t hal_config = {
+        .host_id = host,
+        .dma_in = SPI_LL_GET_HW(host),
+        .dma_out = SPI_LL_GET_HW(host)
+    };
+    spi_slave_hal_init(hal, &hal_config);
 
     if (dma_desc_ct) {
         hal->dmadesc_tx = heap_caps_malloc(sizeof(lldesc_t) * dma_desc_ct, MALLOC_CAP_DMA);
@@ -215,13 +242,13 @@ cleanup:
     free(spihost[host]);
     spihost[host] = NULL;
     spicommon_periph_free(host);
-    spicommon_dma_chan_free(dma_chan);
+    if (dma_chan != 0) spicommon_dma_chan_free(dma_chan);
     return ret;
 }
 
 esp_err_t spi_slave_free(spi_host_device_t host)
 {
-    SPI_CHECK(VALID_HOST(host), "invalid host", ESP_ERR_INVALID_ARG);
+    SPI_CHECK(is_valid_host(host), "invalid host", ESP_ERR_INVALID_ARG);
     SPI_CHECK(spihost[host], "host not slave", ESP_ERR_INVALID_ARG);
     if (spihost[host]->trans_queue) vQueueDelete(spihost[host]->trans_queue);
     if (spihost[host]->ret_queue) vQueueDelete(spihost[host]->ret_queue);
@@ -245,7 +272,7 @@ esp_err_t spi_slave_free(spi_host_device_t host)
 esp_err_t SPI_SLAVE_ATTR spi_slave_queue_trans(spi_host_device_t host, const spi_slave_transaction_t *trans_desc, TickType_t ticks_to_wait)
 {
     BaseType_t r;
-    SPI_CHECK(VALID_HOST(host), "invalid host", ESP_ERR_INVALID_ARG);
+    SPI_CHECK(is_valid_host(host), "invalid host", ESP_ERR_INVALID_ARG);
     SPI_CHECK(spihost[host], "host not slave", ESP_ERR_INVALID_ARG);
     SPI_CHECK(spihost[host]->dma_chan == 0 || trans_desc->tx_buffer==NULL || esp_ptr_dma_capable(trans_desc->tx_buffer),
 			"txdata not in DMA-capable memory", ESP_ERR_INVALID_ARG);
@@ -265,7 +292,7 @@ esp_err_t SPI_SLAVE_ATTR spi_slave_queue_trans(spi_host_device_t host, const spi
 esp_err_t SPI_SLAVE_ATTR spi_slave_get_trans_result(spi_host_device_t host, spi_slave_transaction_t **trans_desc, TickType_t ticks_to_wait)
 {
     BaseType_t r;
-    SPI_CHECK(VALID_HOST(host), "invalid host", ESP_ERR_INVALID_ARG);
+    SPI_CHECK(is_valid_host(host), "invalid host", ESP_ERR_INVALID_ARG);
     SPI_CHECK(spihost[host], "host not slave", ESP_ERR_INVALID_ARG);
     r = xQueueReceive(spihost[host]->ret_queue, (void *)trans_desc, ticks_to_wait);
     if (!r) return ESP_ERR_TIMEOUT;
@@ -286,30 +313,6 @@ esp_err_t SPI_SLAVE_ATTR spi_slave_transmit(spi_host_device_t host, spi_slave_tr
     return ESP_OK;
 }
 
-#ifdef DEBUG_SLAVE
-static void dumpregs(spi_dev_t *hw)
-{
-    ets_printf("***REG DUMP ***\n");
-    ets_printf("mosi_dlen         : %08X\n", hw->mosi_dlen.val);
-    ets_printf("miso_dlen         : %08X\n", hw->miso_dlen.val);
-    ets_printf("slv_wrbuf_dlen    : %08X\n", hw->slv_wrbuf_dlen.val);
-    ets_printf("slv_rdbuf_dlen    : %08X\n", hw->slv_rdbuf_dlen.val);
-    ets_printf("slave             : %08X\n", hw->slave.val);
-    ets_printf("slv_rdata_bit     : %x\n", hw->slv_rd_bit.slv_rdata_bit);
-    ets_printf("dma_rx_status     : %08X\n", hw->dma_rx_status);
-    ets_printf("dma_tx_status     : %08X\n", hw->dma_tx_status);
-}
-
-
-static void dumpll(lldesc_t *ll)
-{
-    ets_printf("****LL DUMP****\n");
-    ets_printf("Size %d\n", ll->size);
-    ets_printf("Len: %d\n", ll->length);
-    ets_printf("Owner: %s\n", ll->owner ? "dma" : "cpu");
-}
-#endif
-
 static void SPI_SLAVE_ISR_ATTR spi_slave_restart_after_dmareset(void *arg)
 {
     spi_slave_t *host = (spi_slave_t *)arg;
@@ -326,11 +329,6 @@ static void SPI_SLAVE_ISR_ATTR spi_intr(void *arg)
     spi_slave_transaction_t *trans = NULL;
     spi_slave_t *host = (spi_slave_t *)arg;
     spi_slave_hal_context_t *hal = &host->hal;
-
-#ifdef DEBUG_SLAVE
-    dumpregs(host->hw);
-    if (host->dmadesc_rx) dumpll(&host->dmadesc_rx[0]);
-#endif
 
     assert(spi_slave_hal_usr_is_done(hal));
 
@@ -393,5 +391,3 @@ static void SPI_SLAVE_ISR_ATTR spi_intr(void *arg)
     }
     if (do_yield) portYIELD_FROM_ISR();
 }
-
-

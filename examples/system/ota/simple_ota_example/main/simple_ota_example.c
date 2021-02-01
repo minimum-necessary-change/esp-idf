@@ -21,11 +21,15 @@
 #include "nvs_flash.h"
 #include "protocol_examples_common.h"
 
+#if CONFIG_EXAMPLE_CONNECT_WIFI
+#include "esp_wifi.h"
+#endif
+
 static const char *TAG = "simple_ota_example";
 extern const uint8_t server_cert_pem_start[] asm("_binary_ca_cert_pem_start");
 extern const uint8_t server_cert_pem_end[] asm("_binary_ca_cert_pem_end");
 
-#define OTA_URL_SIZE 256 
+#define OTA_URL_SIZE 256
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -63,6 +67,7 @@ void simple_ota_example_task(void *pvParameter)
         .url = CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL,
         .cert_pem = (char *)server_cert_pem_start,
         .event_handler = _http_event_handler,
+        .keep_alive_enable = true,
     };
 
 #ifdef CONFIG_EXAMPLE_FIRMWARE_UPGRADE_URL_FROM_STDIN
@@ -108,7 +113,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
 
-    tcpip_adapter_init();
+    ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     /* This helper function configures Wi-Fi or Ethernet, as selected in menuconfig.
@@ -116,6 +121,13 @@ void app_main(void)
      * examples/protocols/README.md for more information about this function.
      */
     ESP_ERROR_CHECK(example_connect());
+
+#if CONFIG_EXAMPLE_CONNECT_WIFI
+    /* Ensure to disable any WiFi power save mode, this allows best throughput
+     * and hence timings for overall OTA operation.
+     */
+    esp_wifi_set_ps(WIFI_PS_NONE);
+#endif // CONFIG_EXAMPLE_CONNECT_WIFI
 
     xTaskCreate(&simple_ota_example_task, "ota_example_task", 8192, NULL, 5, NULL);
 }

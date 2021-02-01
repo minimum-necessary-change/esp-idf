@@ -26,6 +26,24 @@ shows how to use espnow.
 
 See the [README.md](./espnow/README.md) file in the project [espnow](./espnow/).
 
+## fast_scan
+
+Show how to use fast scan while connecting to an AP.
+
+See the [README.md](./fast_scan/README.md) file in the project [fast_scan](./fast_scan/).
+
+## scan
+
+Show how to scan for all the available APs.
+
+See the [README.md](./scan/README.md) file in the project [scan](./scan/).
+
+## FTM(Fine Timing Measurement)
+
+Shows how to use FTM(Fine Timing Measurement).
+
+See the [README.md](./ftm/README.md) file in the project [ftm](./ftm/).
+
 # More
 
 See the [README.md](../README.md) file in the upper level [examples](../) directory for more information about examples.

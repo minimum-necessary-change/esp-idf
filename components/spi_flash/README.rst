@@ -1,6 +1,8 @@
 SPI Flash API
 =============
 
+:link_to_translation:`zh_CN:[中文]`
+
 Overview
 --------
 The spi_flash component contains API functions related to reading, writing,
@@ -8,10 +10,14 @@ erasing, memory mapping for data in the external flash. The spi_flash
 component also has higher-level API functions which work with partitions
 defined in the :doc:`partition table </api-guides/partition-tables>`.
 
-Different from the API before IDF v4.0, the functionality is not limited to
+Different from the API before IDF v4.0, the functionality of esp_flash_* APIs is not limited to
 the "main" SPI flash chip (the same SPI flash chip from which program runs).
 With different chip pointers, you can access to external flashes chips on not
 only SPI0/1 but also HSPI/VSPI buses.
+
+.. note::
+
+    Due to limitations of the cache, access to external flash is limited to `esp_flash_*` APIs through SPI1 only. It is not allowed to use mmap or encrypted operations to access the external flash.
 
 .. note::
 
@@ -29,7 +35,26 @@ the same time.
 Encrypted reads and writes use the old implementation, even if
 :ref:`CONFIG_SPI_FLASH_USE_LEGACY_IMPL` is not enabled. As such, encrypted
 flash operations are only supported with the main flash chip (and not with
-other flash chips on SPI1 with different CS).
+other flash chips, that is on SPI1 with different CS, or on other SPI buses). Reading through cache is
+only supported on the main flash, which is determined by the HW.
+
+Support for features of flash chips
+-----------------------------------
+
+Different chips need different supports, and we will progressively complete drivers for other types of chip in the future. We support the fast/slow read and Dual mode (DOUT/DIO) of almost all 24-bits address flash chips, because they don't need any vendor-specific commands to enable. 
+
+For Quad mode (QIO/QOUT) the following 24-bit address chip types are supported:
+
+1. ISSI
+2. GD
+3. MXIC
+4. FM
+5. Winbond
+6. XMC
+
+We are continuing updating to support 32-bits address chips, here is the list of them:
+
+1. W25Q256
 
 Initializing a flash device
 ---------------------------
@@ -92,6 +117,8 @@ To avoid reading flash cache accidentally, when one CPU initiates a flash write 
 
 If one CPU initiates a flash write or erase operation, the other CPU is put into a blocked state to avoid reading flash cache accidentally. All interrupts not safe for IRAM are disabled on both CPUs until the flash operation completes.
 
+Please also see :ref:`esp_flash_os_func`, :ref:`spi_bus_lock`.
+
 .. _iram-safe-interrupt-handlers:
 
 IRAM-Safe Interrupt Handlers
@@ -139,7 +166,8 @@ This component provides API functions to enumerate partitions found in the parti
 - :cpp:func:`esp_partition_read`, :cpp:func:`esp_partition_write`, :cpp:func:`esp_partition_erase_range` are equivalent to :cpp:func:`spi_flash_read`, :cpp:func:`spi_flash_write`, :cpp:func:`spi_flash_erase_range`, but operate within partition boundaries.
 
 .. note::
-    Application code should mostly use these ``esp_partition_*`` API functions instead of lower level ``spi_flash_*`` API functions. Partition table API functions do bounds checking and calculate correct offsets in flash, based on data stored in a partition table.
+    Application code should mostly use these ``esp_partition_*`` API functions instead of lower level ``esp_flash_*`` API functions. Partition table API functions do bounds checking and calculate correct offsets in flash, based on data stored in a partition table.
+
 
 SPI Flash Encryption
 --------------------
@@ -172,8 +200,10 @@ Differences between :cpp:func:`spi_flash_mmap` and :cpp:func:`esp_partition_mmap
 
 Note that since memory mapping happens in 64KB blocks, it may be possible to read data outside of the partition provided to ``esp_partition_mmap``.
 
-Implementation
---------------
+.. note:: mmap is supported by cache, so it can only be used on main flash.
+
+SPI Flash Implementation
+------------------------
 
 The ``esp_flash_t`` structure holds chip data as well as three important parts of this API:
 
@@ -186,7 +216,7 @@ Host driver
 ^^^^^^^^^^^
 
 The host driver relies on an interface (``spi_flash_host_driver_t``) defined
-in the ``spi_flash_host_drv.h`` (in the ``soc/include/hal`` folder). This
+in the ``spi_flash_types.h`` (in the ``hal/include/hal`` folder). This
 interface provides some common functions to communicate with the chip.
 
 In other files of the SPI HAL, some of these functions are implemented with
@@ -217,21 +247,28 @@ chip.
 
 The chip driver relies on the host driver.
 
+.. _esp_flash_os_func:
+
 OS functions
 ^^^^^^^^^^^^
 
-Currently the OS function layer provides a lock and a delay entries.
+Currently the OS function layer provides entries of a lock and delay.
 
-The lock is used to resolve the conflicts between the SPI chip access and
-other functions. E.g. the cache (used for the code and PSRAM data fetch)
-should be disabled when the flash chip on the SPI0/1 is being accessed. Also,
-some devices which don't have CS wire, or the wire is controlled by the
-software (e.g. SD card via SPI interface), requires the bus to be monopolized
-during a period.
+The lock (see :ref:`spi_bus_lock`) is used to resolve the conflicts among the access of devices
+on the same SPI bus, and the SPI Flash chip access. E.g.
+
+1. On SPI1 bus, the cache (used to fetch the data (code) in the Flash and PSRAM) should be
+   disabled when the flash chip on the SPI0/1 is being accessed.
+
+2. On the other buses, the flash driver needs to disable the ISR registered by SPI Master driver,
+   to avoid conflicts.
+
+3. Some devices of SPI Master driver may requires to use the bus monopolized during a period.
+   (especially when the device doesn't have CS wire, or the wire is controlled by the software
+   like SDSPI driver).
 
 The delay is used by some long operations which requires the master to wait
 or polling periodically.
-
 
 The top API wraps these the chip driver and OS functions into an entire
 component, and also provides some argument checking.

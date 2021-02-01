@@ -24,7 +24,7 @@ static void mdns_print_results(mdns_result_t * results)
 {
     mdns_result_t * r = results;
     mdns_ip_addr_t * a = NULL;
-    int i = 1, t;
+    int i = 1;
     while (r) {
         printf("%d: Interface: %s, Type: %s\n", i++, if_str[r->tcpip_if], ip_protocol_str[r->ip_protocol]);
         if (r->instance_name) {
@@ -35,14 +35,14 @@ static void mdns_print_results(mdns_result_t * results)
         }
         if (r->txt_count) {
             printf("  TXT : [%u] ", r->txt_count);
-            for (t=0; t<r->txt_count; t++) {
+            for (size_t t=0; t<r->txt_count; t++) {
                 printf("%s=%s; ", r->txt[t].key, r->txt[t].value);
             }
             printf("\n");
         }
         a = r->addr;
         while (a) {
-            if (a->addr.type == IPADDR_TYPE_V6) {
+            if (a->addr.type == ESP_IPADDR_TYPE_V6) {
                 printf("  AAAA: " IPV6STR "\n", IPV62STR(a->addr.u_addr.ip6));
             } else {
                 printf("  A   : " IPSTR "\n", IP2STR(&(a->addr.u_addr.ip4)));
@@ -81,7 +81,7 @@ static int cmd_mdns_query_a(int argc, char** argv)
 
     printf("Query A: %s.local, Timeout: %d\n", hostname, timeout);
 
-    struct ip4_addr addr;
+    struct esp_ip4_addr addr;
     addr.addr = 0;
 
     esp_err_t err = mdns_query_a(hostname, timeout,  &addr);
@@ -138,7 +138,7 @@ static int cmd_mdns_query_aaaa(int argc, char** argv)
 
     printf("Query AAAA: %s.local, Timeout: %d\n", hostname, timeout);
 
-    struct ip6_addr addr;
+    struct esp_ip6_addr addr;
     memset(addr.addr, 0, 16);
 
     esp_err_t err = mdns_query_aaaa(hostname, timeout,  &addr);
@@ -1057,4 +1057,3 @@ void mdns_console_register(void)
     register_mdns_query_ip();
     register_mdns_query_svc();
 }
-

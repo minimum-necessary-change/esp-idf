@@ -10,12 +10,24 @@ set(IDFTOOL ${PYTHON} "${IDF_PATH}/tools/idf.py")
 # Internally, the Python interpreter is already set to 'python'. Re-set here
 # to be absolutely sure.
 set_default(PYTHON "python")
+file(TO_CMAKE_PATH ${PYTHON} PYTHON)
 idf_build_set_property(PYTHON ${PYTHON})
 
 # On processing, checking Python required modules can be turned off if it was
 # already checked externally.
 if(PYTHON_DEPS_CHECKED)
     idf_build_set_property(__CHECK_PYTHON 0)
+endif()
+
+# Store CMake arguments that need to be passed into all CMake sub-projects as well
+# (bootloader, ULP, etc)
+#
+# It's not possible to tell if CMake was called with --warn-uninitialized, so to also
+# have these warnings in sub-projects we set a cache variable as well and then check that.
+if(WARN_UNINITIALIZED)
+    idf_build_set_property(EXTRA_CMAKE_ARGS --warn-uninitialized)
+else()
+    idf_build_set_property(EXTRA_CMAKE_ARGS "")
 endif()
 
 # Initialize build target for this build using the environment variable or
@@ -44,7 +56,6 @@ function(__project_get_revision var)
             endif()
         endif()
     endif()
-    message(STATUS "Project version: ${PROJECT_VER}")
     set(${var} "${PROJECT_VER}" PARENT_SCOPE)
 endfunction()
 
@@ -158,6 +169,8 @@ function(__project_init components_var test_components_var)
         endif()
     endfunction()
 
+    idf_build_set_property(IDF_COMPONENT_MANAGER "$ENV{IDF_COMPONENT_MANAGER}")
+
     # Add component directories to the build, given the component filters, exclusions
     # extra directories, etc. passed from the root CMakeLists.txt.
     if(COMPONENT_DIRS)
@@ -168,18 +181,55 @@ function(__project_init components_var test_components_var)
             __project_component_dir(${component_dir})
         endforeach()
     else()
-        # Look for components in the usual places: CMAKE_CURRENT_LIST_DIR/main,
-        # CMAKE_CURRENT_LIST_DIR/components, and the extra component dirs
-        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/main")
-            __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/main")
-        endif()
+        # Add project manifest and lock file to the list of dependencies
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/idf_project.yml")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/dependencies.lock")
 
-        __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/components")
+        idf_build_get_property(idf_component_manager IDF_COMPONENT_MANAGER)
+        if(idf_component_manager)
+            if(idf_component_manager EQUAL "0")
+                message(VERBOSE "IDF Component manager was explicitly disabled by setting IDF_COMPONENT_MANAGER=0")
+            elseif(idf_component_manager EQUAL "1")
+                set(managed_components_list_file ${CMAKE_BINARY_DIR}/managed_components_list.temp.cmake)
+
+                # Call for package manager to prepare remote dependencies
+                execute_process(COMMAND ${PYTHON}
+                    "-m"
+                    "idf_component_manager.prepare_components"
+                    "--project_dir=${CMAKE_CURRENT_LIST_DIR}"
+                    "prepare_dependencies"
+                    "--managed_components_list_file=${managed_components_list_file}"
+                    RESULT_VARIABLE result
+                    ERROR_VARIABLE error)
+
+                if(NOT result EQUAL 0)
+                    message(FATAL_ERROR "${error}")
+                endif()
+
+                # Include managed components
+                include(${managed_components_list_file})
+                file(REMOVE ${managed_components_list_file})
+            else()
+                message(WARNING "IDF_COMPONENT_MANAGER environment variable is set to unknown value "
+                        "\"${idf_component_manager}\". If you want to use component manager set it to 1.")
+            endif()
+        elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/idf_project.yml")
+            message(WARNING "\"idf_project.yml\" file is found in project directory, "
+                    "but component manager is not enabled. Please set IDF_COMPONENT_MANAGER environment variable.")
+        endif()
 
         spaces2list(EXTRA_COMPONENT_DIRS)
         foreach(component_dir ${EXTRA_COMPONENT_DIRS})
             __project_component_dir("${component_dir}")
         endforeach()
+
+        __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/components")
+
+        # Look for components in the usual places: CMAKE_CURRENT_LIST_DIR/main,
+        # CMAKE_CURRENT_LIST_DIR/components, and the extra component dirs
+        if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/main")
+            __project_component_dir("${CMAKE_CURRENT_LIST_DIR}/main")
+        endif()
     endif()
 
     spaces2list(COMPONENTS)
@@ -302,25 +352,30 @@ macro(project project_name)
     # PROJECT_NAME is taken from the passed name from project() call
     # PROJECT_DIR is set to the current directory
     # PROJECT_VER is from the version text or git revision of the current repo
-    if(SDKCONFIG_DEFAULTS)
-        get_filename_component(sdkconfig_defaults "${SDKCONFIG_DEFAULTS}" ABSOLUTE)
-        if(NOT EXISTS "${sdkconfig_defaults}")
-            message(FATAL_ERROR "SDKCONFIG_DEFAULTS '${sdkconfig_defaults}' does not exist.")
-        endif()
-    else()
+    set(_sdkconfig_defaults "$ENV{SDKCONFIG_DEFAULTS}")
+
+    if(NOT _sdkconfig_defaults)
         if(EXISTS "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
-            set(sdkconfig_defaults "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
+            set(_sdkconfig_defaults "${CMAKE_SOURCE_DIR}/sdkconfig.defaults")
         else()
-            set(sdkconfig_defaults "")
+            set(_sdkconfig_defaults "")
         endif()
     endif()
 
+    if(SDKCONFIG_DEFAULTS)
+        set(_sdkconfig_defaults "${SDKCONFIG_DEFAULTS}")
+    endif()
+
+    foreach(sdkconfig_default ${_sdkconfig_defaults})
+        get_filename_component(sdkconfig_default "${sdkconfig_default}" ABSOLUTE)
+        if(NOT EXISTS "${sdkconfig_default}")
+            message(FATAL_ERROR "SDKCONFIG_DEFAULTS '${sdkconfig_default}' does not exist.")
+        endif()
+        list(APPEND sdkconfig_defaults ${sdkconfig_default})
+    endforeach()
+
     if(SDKCONFIG)
         get_filename_component(sdkconfig "${SDKCONFIG}" ABSOLUTE)
-        if(NOT EXISTS "${sdkconfig}")
-            message(FATAL_ERROR "SDKCONFIG '${sdkconfig}' does not exist.")
-        endif()
-        set(sdkconfig ${SDKCONFIG})
     else()
         set(sdkconfig "${CMAKE_CURRENT_LIST_DIR}/sdkconfig")
     endif()
@@ -375,15 +430,19 @@ macro(project project_name)
 
     set(project_elf ${CMAKE_PROJECT_NAME}.elf)
 
-    # Create a dummy file to work around CMake requirement of having a source
-    # file while adding an executable
-    set(project_elf_src ${CMAKE_BINARY_DIR}/project_elf_src.c)
+    # Create a dummy file to work around CMake requirement of having a source file while adding an
+    # executable. This is also used by idf_size.py to detect the target
+    set(project_elf_src ${CMAKE_BINARY_DIR}/project_elf_src_${IDF_TARGET}.c)
     add_custom_command(OUTPUT ${project_elf_src}
         COMMAND ${CMAKE_COMMAND} -E touch ${project_elf_src}
         VERBATIM)
     add_custom_target(_project_elf_src DEPENDS "${project_elf_src}")
     add_executable(${project_elf} "${project_elf_src}")
     add_dependencies(${project_elf} _project_elf_src)
+
+    if(__PROJECT_GROUP_LINK_COMPONENTS)
+        target_link_libraries(${project_elf} "-Wl,--start-group")
+    endif()
 
     if(test_components)
         target_link_libraries(${project_elf} "-Wl,--whole-archive")
@@ -401,8 +460,10 @@ macro(project project_name)
     endif()
     target_link_libraries(${project_elf} ${build_components})
 
-    set(mapfile "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.map")
-    target_link_libraries(${project_elf} "-Wl,--cref -Wl,--Map=${mapfile}")
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        set(mapfile "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}.map")
+        target_link_libraries(${project_elf} "-Wl,--cref -Wl,--Map=${mapfile}")
+    endif()
 
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" APPEND PROPERTY
         ADDITIONAL_MAKE_CLEAN_FILES
@@ -431,6 +492,12 @@ macro(project project_name)
         )
 
     unset(idf_size)
+
+    # Add DFU build and flash targets
+    __add_dfu_targets()
+
+    # Add UF2 build targets
+    __add_uf2_targets()
 
     idf_build_executable(${project_elf})
 

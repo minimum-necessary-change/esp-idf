@@ -209,7 +209,7 @@ bool host_recv_adv_packet(BT_HDR *packet)
 {
     assert(packet);
     if(packet->data[0] == DATA_TYPE_EVENT && packet->data[1] == HCI_BLE_EVENT) {
-        if(packet->data[3] ==  HCI_BLE_ADV_PKT_RPT_EVT 
+        if(packet->data[3] ==  HCI_BLE_ADV_PKT_RPT_EVT
 #if (BLE_ADV_REPORT_FLOW_CONTROL == TRUE)
         || packet->data[3] ==  HCI_BLE_ADV_DISCARD_REPORT_EVT
 #endif
@@ -338,7 +338,7 @@ static int host_recv_pkt_cb(uint8_t *data, uint16_t len)
 
     pkt_size = BT_HDR_SIZE + len;
     pkt = (BT_HDR *) osi_calloc(pkt_size);
-    //pkt = (BT_HDR *)hci_hal_env.allocator->alloc(pkt_size);
+
     if (!pkt) {
         HCI_TRACE_ERROR("%s couldn't aquire memory for inbound data buffer.\n", __func__);
         return -1;
@@ -371,4 +371,3 @@ const hci_hal_t *hci_hal_h4_get_interface(void)
 {
     return &interface;
 }
-

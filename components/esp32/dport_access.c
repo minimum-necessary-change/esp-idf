@@ -22,24 +22,21 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <sdkconfig.h>
 #include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_intr_alloc.h"
-#include "esp32/rom/ets_sys.h"
-#include "esp32/rom/uart.h"
 
 #include "soc/cpu.h"
 #include "soc/dport_reg.h"
 #include "soc/spi_periph.h"
+#include "hal/cpu_hal.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "freertos/queue.h"
-#include "freertos/portmacro.h"
 
-#include "xtensa/core-macros.h"
+#include "sdkconfig.h"
 
 #ifndef CONFIG_FREERTOS_UNICORE
 static portMUX_TYPE g_dport_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -80,7 +77,7 @@ void IRAM_ATTR esp_dport_access_stall_other_cpu_start(void)
     int cpu_id = xPortGetCoreID();
 
 #ifdef DPORT_ACCESS_BENCHMARK
-    ccount_start[cpu_id] = XTHAL_GET_CCOUNT();
+    ccount_start[cpu_id] = cpu_hal_get_cycle_count();
 #endif
 
     if (dport_access_ref[cpu_id] == 0) {
@@ -137,22 +134,13 @@ void IRAM_ATTR esp_dport_access_stall_other_cpu_end(void)
     }
 
 #ifdef DPORT_ACCESS_BENCHMARK
-    ccount_end[cpu_id] = XTHAL_GET_CCOUNT();
+    ccount_end[cpu_id] = cpu_hal_get_cycle_count();
     ccount_margin[cpu_id][ccount_margin_cnt] = ccount_end[cpu_id] - ccount_start[cpu_id];
     ccount_margin_cnt = (ccount_margin_cnt + 1)&(DPORT_ACCESS_BENCHMARK_STORE_NUM - 1);
 #endif
 #endif /* CONFIG_FREERTOS_UNICORE */
 }
 
-void IRAM_ATTR esp_dport_access_stall_other_cpu_start_wrap(void)
-{
-    DPORT_STALL_OTHER_CPU_START();
-}
-
-void IRAM_ATTR esp_dport_access_stall_other_cpu_end_wrap(void)
-{
-    DPORT_STALL_OTHER_CPU_END();
-}
 
 #ifndef CONFIG_FREERTOS_UNICORE
 static void dport_access_init_core(void *arg)
@@ -255,8 +243,8 @@ uint32_t IRAM_ATTR esp_dport_access_reg_read(uint32_t reg)
     uint32_t apb;
     unsigned int intLvl;
     __asm__ __volatile__ (\
-                  "movi %[APB], "XTSTR(0x3ff40078)"\n"\
                   "rsil %[LVL], "XTSTR(CONFIG_ESP32_DPORT_DIS_INTERRUPT_LVL)"\n"\
+                  "movi %[APB], "XTSTR(0x3ff40078)"\n"\
                   "l32i %[APB], %[APB], 0\n"\
                   "l32i %[REG], %[REG], 0\n"\
                   "wsr  %[LVL], "XTSTR(PS)"\n"\

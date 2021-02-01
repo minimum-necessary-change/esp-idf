@@ -9,7 +9,9 @@ ESP32 application can do upgrading at runtime by downloading new image from spec
 - Using the native APIs provided by `app_update` component.
 - Using simplified APIs provided by  `esp_https_ota` component, which adds an abstraction layer over the native OTA APIs in order to upgrading with HTTPS protocol.
 
-Both methods are demonstrated in OTA Demos under `native_ota_example` and `simple_ota_example` respectively.
+Use of native APIs is demonstrated under `native_ota_example` while use of APIs provided by `esp_https_ota` component is demonstrated under `simple_ota_example` and `advanced_https_ota`.
+
+For information regarding APIs provided by `esp_https_ota` component, please refer to [ESP HTTPS OTA](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/esp_https_ota.html).
 
 For simplicity, the OTA examples choose the pre-defined partition table by enabling `CONFIG_PARTITION_TABLE_TWO_OTA` option in menuconfig, which supports three app partitions: factory, OTA_0 and OTA_1. For more information about partition table, please refer to [Partition Tables](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/partition-tables.html).
 
@@ -109,10 +111,11 @@ If GPIO is not pulled low then the operable of the app will be confirmed.
 
 For ``native_ota_example``, code has been added to demonstrate how to check the version of the application and prevent infinite firmware updates. Only the application with the new version can be downloaded. Version checking is performed after the very first firmware image package has been received, which contains data about the firmware version. The application version can be taken from three places:
 
-1. If ``PROJECT_VER`` variable set in project Cmake/Makefile file, its value will be used.
-2. Else, if the ``$PROJECT_PATH/version.txt`` exists, its contents will be used as ``PROJECT_VER``.
-3. Else, if the project is located inside a Git repository, the output of ``git describe`` will be used.
-4. Otherwise, ``PROJECT_VER`` will be "1".
+1. If `CONFIG_APP_PROJECT_VER_FROM_CONFIG` option is set, the value of `CONFIG_APP_PROJECT_VER` will be used.
+2. Else, if ``PROJECT_VER`` variable set in project Cmake/Makefile file, its value will be used.
+3. Else, if the ``$PROJECT_PATH/version.txt`` exists, its contents will be used as ``PROJECT_VER``.
+4. Else, if the project is located inside a Git repository, the output of ``git describe`` will be used.
+5. Otherwise, ``PROJECT_VER`` will be "1".
 
 In ``native_ota_example``, ``$PROJECT_PATH/version.txt`` is used to define the version of app. Change the version in the file to compile the new firmware.
 

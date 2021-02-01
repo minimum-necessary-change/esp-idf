@@ -7,22 +7,25 @@ Standard Setup of Toolchain for Linux
 Install Prerequisites
 =====================
 
-To compile with ESP-IDF you need to get the following packages:
-
-- CentOS 7::
-
-    sudo yum install git wget ncurses-devel flex bison gperf python pyserial python-pyelftools cmake ninja-build ccache
+To compile with ESP-IDF you need to get the following packages. The command to run depends on which distribution of Linux you are using:
 
 - Ubuntu and Debian::
 
-    sudo apt-get install git wget libncurses-dev flex bison gperf python python-pip python-setuptools python-serial python-click python-cryptography python-future python-pyparsing python-pyelftools cmake ninja-build ccache
+    sudo apt-get install git wget flex bison gperf python3 python3-pip python3-setuptools cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+
+- CentOS 7 & 8::
+
+    sudo yum -y update && sudo yum install git wget flex bison gperf python3 cmake ninja-build ccache dfu-util libusbx
+
+CentOS 7 is still supported but CentOS version 8 is recommended for a better user experience.
 
 - Arch::
 
-    sudo pacman -S --needed gcc git make ncurses flex bison gperf python2-pip python2-pyserial python2-click python2-cryptography python2-future python2-pyparsing python2-pyelftools cmake ninja ccache
+    sudo pacman -S --needed gcc git make flex bison gperf python-pip cmake ninja ccache dfu-util libusb
 
 .. note::
-    CMake version 3.5 or newer is required for use with ESP-IDF. Older Linux distributions may require updating, enabling of a "backports" repository, or installing of a "cmake3" package rather than "cmake".
+    - CMake version 3.5 or newer is required for use with ESP-IDF. Older Linux distributions may require updating, enabling of a "backports" repository, or installing of a "cmake3" package rather than "cmake".
+    - If you do not see your Linux distribution in the above list then please check its documentation to find out which command to use for package installation.
 
 Additional Tips
 ===============
@@ -30,35 +33,53 @@ Additional Tips
 Permission issues /dev/ttyUSB0
 ------------------------------
 
-With some Linux distributions you may get the ``Failed to open port /dev/ttyUSB0`` error message when flashing the ESP32. :ref:`This can be solved by adding the current user to the dialout group<linux-dialout-group>`.
+With some Linux distributions you may get the ``Failed to open port /dev/ttyUSB0`` error message when flashing the {IDF_TARGET_NAME}. :ref:`This can be solved by adding the current user to the dialout group<linux-dialout-group>`.
 
-ncurses 5 dependency
---------------------
+Setting up Python 3 as default for CentOS
+-----------------------------------------
 
-To run the precompiled gdb (xtensa-esp32-elf-gdb) in Linux requires ncurses 5, but some newer distributions only provide ncurses 6 by default.
+CentOS 7 and older is providing Python 2.7 as the default interpreter.
+Python 3 is recommended instead and can be installed in old distributions as follows, or please consult the documentation of your operating system for other recommended ways to achieve this::
 
-Consult your distribution's documentation to see if ncurses 5 libraries are available. Alternatively, use crosstool-NG to compile a gdb that links against ncurses 6.
+    sudo yum -y update && sudo yum install python3 python3-pip python3-setuptools
 
-For Arch Linux users, ncurses 5 libraries are available in AUR_ for native and lib32 configurations:
+Making Python 3 the default interpreter is possible by running::
 
-- https://aur.archlinux.org/packages/ncurses5-compat-libs/
-- https://aur.archlinux.org/packages/lib32-ncurses5-compat-libs/
+    sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 10 && alias pip=pip3
 
-Before installing these packages you might need to add the author's public key to your keyring as described in the "Comments" section at the links above.
+Setting up Python 3 as default for Ubuntu and Debian
+----------------------------------------------------
+
+Ubuntu (version 18.04 and older) and Debian (version 9 and older) are still providing Python 2.7 as the default interpreter.
+Python 3 is recommended instead and can be installed in old distributions as follows, or please consult the documentation of your operating system for other recommended ways to achieve this::
+
+    sudo apt-get install python3 python3-pip python3-setuptools
+
+Making Python 3 the default interpreter is possible by running::
+
+    sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 10 && alias pip=pip3
+
+.. note::
+    This is system-wide change which may affect all of the applications.
+
+Fixing broken pip on Ubuntu 16.04
+=================================
+
+Package ``python3-pip`` could be broken without possibility to upgrade it. 
+Package has to be removed and installed manually using script `get-pip.py <https://bootstrap.pypa.io/get-pip.py>`_.::
+
+    apt remove python3-pip python3-virtualenv; rm -r ~/.local
+    rm -r ~/.espressif/python_env && python get-pip.py
+
+Python 2 deprecation
+====================
+
+Python 2 reached its `end of life <https://www.python.org/doc/sunset-python-2/>`_ and support for it in ESP-IDF will be removed soon. Please install Python 3.6 or higher. Instructions for popular Linux distributions are listed above.
 
 Next Steps
 ==========
 
 To carry on with development environment setup, proceed to :ref:`get-started-get-esp-idf`.
-
-
-Related Documents
-=================
-
-.. toctree::
-    :maxdepth: 1
-
-    linux-setup-scratch
 
 
 .. _AUR: https://wiki.archlinux.org/index.php/Arch_User_Repository

@@ -12,10 +12,12 @@
 #include "soc/cpu.h"
 #include "unity.h"
 #include "test_utils.h"
-#include "esp32/rom/uart.h"
-#include "soc/uart_periph.h"
+#include "esp_rom_uart.h"
+#include "hal/uart_types.h"
+#include "hal/uart_ll.h"
 #include "soc/dport_reg.h"
 #include "soc/rtc.h"
+#include "hal/cpu_hal.h"
 #include "esp_intr_alloc.h"
 #include "driver/timer.h"
 
@@ -127,9 +129,10 @@ void run_tasks_with_change_freq_cpu(int cpu_freq_mhz)
         bool res = rtc_clk_cpu_freq_mhz_to_config(cpu_freq_mhz, &new_config);
         assert(res && "invalid frequency value");
 
-        uart_tx_wait_idle(uart_num);
+        esp_rom_uart_tx_wait_idle(uart_num);
         rtc_clk_cpu_freq_set_config(&new_config);
-        uart_div_modify(uart_num, (rtc_clk_apb_freq_get() << 4) / uart_baud);
+        uart_ll_set_sclk(UART_LL_GET_HW(uart_num), UART_SCLK_APB);
+        uart_ll_set_baudrate(UART_LL_GET_HW(uart_num), uart_baud);
         /* adjust RTOS ticks */
         _xt_tick_divisor = cpu_freq_mhz * 1000000 / XT_TICK_PER_SEC;
         vTaskDelay(2);
@@ -139,9 +142,10 @@ void run_tasks_with_change_freq_cpu(int cpu_freq_mhz)
     run_tasks("accessDPORT", accessDPORT, "accessAPB", accessAPB, 10000);
 
     // return old freq.
-    uart_tx_wait_idle(uart_num);
+    esp_rom_uart_tx_wait_idle(uart_num);
     rtc_clk_cpu_freq_set_config(&old_config);
-    uart_div_modify(uart_num, (rtc_clk_apb_freq_get() << 4) / uart_baud);
+    uart_ll_set_sclk(UART_LL_GET_HW(uart_num), UART_SCLK_APB);
+    uart_ll_set_baudrate(UART_LL_GET_HW(uart_num), uart_baud);
     _xt_tick_divisor = old_config.freq_mhz * 1000000 / XT_TICK_PER_SEC;
 }
 
@@ -353,7 +357,7 @@ static void accessDPORT2_stall_other_cpu(void *pvParameters)
     dport_test_result = true;
     while (exit_flag == false) {
         DPORT_STALL_OTHER_CPU_START();
-        XTHAL_SET_CCOMPARE(2, XTHAL_GET_CCOUNT());
+        XTHAL_SET_CCOMPARE(2, cpu_hal_get_cycle_count());
         xt_highint5_read_apb = 1;
         for (int i = 0; i < 200; ++i) {
             if (_DPORT_REG_READ(DPORT_DATE_REG) != _DPORT_REG_READ(DPORT_DATE_REG)) {
@@ -390,7 +394,7 @@ static void accessDPORT2(void *pvParameters)
     TEST_ESP_OK(esp_intr_alloc(ETS_INTERNAL_TIMER2_INTR_SOURCE, ESP_INTR_FLAG_LEVEL5 | ESP_INTR_FLAG_IRAM, NULL, NULL, &inth));
 
     while (exit_flag == false) {
-        XTHAL_SET_CCOMPARE(2, XTHAL_GET_CCOUNT() + 21);
+        XTHAL_SET_CCOMPARE(2, cpu_hal_get_cycle_count() + 21);
         for (int i = 0; i < 200; ++i) {
             if (DPORT_REG_READ(DPORT_DATE_REG) != DPORT_REG_READ(DPORT_DATE_REG)) {
                 dport_test_result = false;
@@ -413,5 +417,82 @@ TEST_CASE("Check pre-read workaround DPORT and Hi-interrupt", "[esp32]")
     // Access DPORT(pre-read method) - CPU1
     // Hi-interrupt                  - CPU1
     run_tasks("accessAPB", accessAPB, "accessDPORT2", accessDPORT2, 10000);
+}
+
+static uint32_t s_shift_counter;
+
+/*
+The test_dport_access_reg_read() is similar DPORT_REG_READ() but has differents:
+- generate an interrupt by SET_CCOMPARE
+- additional branch command helps get good reproducing an issue with breaking the DPORT pre-read workaround
+- uncomment (1) and comment (2) it allows seeing the broken pre-read workaround
+For pre-reading the workaround, it is important that the two reading commands APB and DPORT
+are executed without interruption. For this reason, it disables interrupts and to do reading inside the safe area.
+But despite a disabling interrupt it was still possible that these two readings can be interrupted.
+The reason is linked with work parallel execution commands in the pipeline (it is not a bug).
+To resolve this issue (1) was moved to (2) position into the disabled interrupt part.
+When the read command is interrupted after stage E(execute), the result of its execution will be saved in the internal buffer,
+and after returning from the interrupt, this command takes this value from the buffer without repeating the reading,
+which is critical for the DPORT pre-read workaround. To fix it we added additional command under safe area ((1)->(2)).
+*/
+static uint32_t IRAM_ATTR test_dport_access_reg_read(uint32_t reg)
+{
+#if defined(BOOTLOADER_BUILD) || !defined(CONFIG_ESP32_DPORT_WORKAROUND) || !defined(ESP_PLATFORM)
+    return _DPORT_REG_READ(reg);
+#else
+    uint32_t apb;
+    unsigned int intLvl;
+    XTHAL_SET_CCOMPARE(2, cpu_hal_get_cycle_count() + s_shift_counter);
+    __asm__ __volatile__ (\
+                  /* "movi %[APB], "XTSTR(0x3ff40078)"\n" */ /* (1) uncomment for reproduce issue */ \
+                  "bnez %[APB], kl1\n" /* this branch command helps get good reproducing */ \
+                  "kl1:\n"\
+                  "rsil %[LVL], "XTSTR(CONFIG_ESP32_DPORT_DIS_INTERRUPT_LVL)"\n"\
+                  "movi %[APB], "XTSTR(0x3ff40078)"\n" /* (2) comment for reproduce issue */ \
+                  "l32i %[APB], %[APB], 0\n"\
+                  "l32i %[REG], %[REG], 0\n"\
+                  "wsr  %[LVL], "XTSTR(PS)"\n"\
+                  "rsync\n"\
+                  : [APB]"=a"(apb), [REG]"+a"(reg), [LVL]"=a"(intLvl)\
+                  : \
+                  : "memory" \
+                  );
+    return reg;
+#endif
+}
+
+// The accessDPORT3 task is similar accessDPORT2 but uses test_dport_access_reg_read() instead of usual DPORT_REG_READ().
+static void accessDPORT3(void *pvParameters)
+{
+    xSemaphoreHandle *sema = (xSemaphoreHandle *) pvParameters;
+    dport_test_result = true;
+
+    TEST_ESP_OK(esp_intr_alloc(ETS_INTERNAL_TIMER2_INTR_SOURCE, ESP_INTR_FLAG_LEVEL5 | ESP_INTR_FLAG_IRAM, NULL, NULL, &inth));
+    int i = 0;
+    while (exit_flag == false) {
+        if (test_dport_access_reg_read(DPORT_DATE_REG) != test_dport_access_reg_read(DPORT_DATE_REG)) {
+            dport_test_result = false;
+            break;
+        }
+        if ((++i % 100) == 0) {
+            s_shift_counter = (s_shift_counter + 1) % 30;
+        }
+    }
+    esp_intr_free(inth);
+    printf("accessDPORT3 finish\n");
+
+    xSemaphoreGive(*sema);
+    vTaskDelete(NULL);
+}
+
+TEST_CASE("Check pre-read workaround DPORT and Hi-interrupt (2)", "[esp32]")
+{
+    s_shift_counter = 1;
+    xt_highint5_read_apb = 0;
+    dport_test_result    = false;
+    apb_test_result      = true;
+    // Access DPORT(pre-read method) - CPU1
+    // Hi-interrupt                  - CPU1
+    run_tasks("accessAPB", accessAPB, "accessDPORT3", accessDPORT3, 10000);
 }
 #endif // CONFIG_FREERTOS_UNICORE

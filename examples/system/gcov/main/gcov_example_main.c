@@ -19,6 +19,7 @@
 #define BLINK_GPIO CONFIG_BLINK_GPIO
 
 void blink_dummy_func(void);
+void some_dummy_func(void);
 
 static void blink_task(void *pvParameter)
 {
@@ -31,7 +32,7 @@ static void blink_task(void *pvParameter)
        Technical Reference for a list of pads and their default
        functions.)
     */
-    gpio_pad_select_gpio(BLINK_GPIO);
+    gpio_reset_pin(BLINK_GPIO);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
 
@@ -43,6 +44,7 @@ static void blink_task(void *pvParameter)
         gpio_set_level(BLINK_GPIO, 1);
         vTaskDelay(500 / portTICK_PERIOD_MS);
         blink_dummy_func();
+        some_dummy_func();
         if (dump_gcov_after++ < 0) {
             // Dump gcov data
             printf("Ready to dump GCOV data...\n");

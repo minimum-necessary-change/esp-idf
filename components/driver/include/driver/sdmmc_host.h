@@ -14,6 +14,9 @@
 
 #pragma once
 
+#include "soc/soc_caps.h"
+#if SOC_SDMMC_HOST_SUPPORTED
+
 #include <stdint.h>
 #include <stddef.h>
 #include "esp_err.h"
@@ -240,3 +243,5 @@ esp_err_t sdmmc_host_pullup_en(int slot, int width);
 #ifdef __cplusplus
 }
 #endif
+
+#endif //SOC_SDMMC_HOST_SUPPORTED
